@@ -1,0 +1,82 @@
+name: Deploy to GitHub Pages and Docker Hub
+
+on:
+  push:
+    branches: [ master, feature ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  lint-html:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install htmlhint
+      run: npm install -g htmlhint
+    
+    - name: Lint HTML
+      run: htmlhint index.html
+
+  docker-push:
+    runs-on: ubuntu-latest
+    needs: lint-html
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: ${{ secrets.DOCKER_USERNAME }}/si-2025-lab3:${{ github.ref_name }}-latest
+
+  deploy-pages:
+    runs-on: ubuntu-latest
+    needs: lint-html
+    if: github.ref == 'refs/heads/master'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Pages
+      uses: actions/configure-pages@v3
+    
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v2
+      with:
+        path: '.'
+    
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v2
+
+  test-docker:
+    runs-on: ubuntu-latest
+    needs: docker-push
+    if: github.ref == 'refs/heads/master'
+    steps:
+    - name: Test Docker image
+      run: |
+        docker run -d -p 80:80 --name test-container ${{ secrets.DOCKER_USERNAME }}/si-2025-lab3:master-latest
+        sleep 10
+        curl -f http://localhost:80 || exit 1
+        docker stop test-container
+        docker rm test-container
